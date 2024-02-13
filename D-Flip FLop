@@ -1,0 +1,175 @@
+//RTL...............
+/////////// [DESIGN CODE] /////////////
+module dff (
+	input din,clk,
+  	input rst,
+    output reg dout,
+);
+  
+  always @(posedge clk)
+    begin
+      if (rst == 1'b1)
+        dout<= 1'b0;
+      else 
+        dout <= din;
+    end
+endmodule
+///////////////////////////
+interface dff_if;
+  logic clk;
+  logic din;
+  logic rst;
+  logic dout;
+endinterface
+
+
+
+//Test Bench
+`include "uvm_macros.svh"
+import uvm_pkg::*;
+//////////// [TRANSACTION CLASS] ////////////
+class transaction extends uvm_sequence_item;
+  `uvm_object_utils(transaction)
+  
+  rand bit rst;
+  rand bit din;
+  bit dout;
+  
+  function new(input string path= "transaction");
+    super.new(path);
+  endfunction
+endclass
+///////////// [Valid_in] /////////////
+class valid_in extends uvm_squence#(transaction);
+  `uvm_object_utils(valid_in)
+  
+  transaction tr;
+  
+  function new(input string path= "valid_in");
+    super.new(path);
+  endfunction
+  
+  virtual task body();
+    repeat(5)
+      begin
+        tr= transaction::type_id::create("tr");
+        start_item(tr);
+        assert(tr.randomize());
+        tr.rst=1'b0;
+        `uvm_info("SEQ",$sformatf("rst:%0d din:%0d dout:%0d"),tr.rst,tr.din,tr.dout);
+        finish_item(tr);
+      end
+  endtask
+endclass
+////////////// [Rst_dff] ///////////
+class rst_dff extends uvm_sequence#(transaction);
+  `uvm_object_utils(rst_dff)
+  
+  transaction tr;
+  
+  function new(input string path= "valid_in");
+    super.new(path);
+  endfunction
+  
+  virtual task body();
+    repeat (5)
+      begin
+        tr=transaction::type_id::create("tr");
+        start_item(trs);
+        assert(tr.randomize());
+        tr.rst=1'b1;
+        `uvm_info("SEQ",$sformatf("rst:%0d din:%0d dout:%0d"),tr.rst,tr.din,tr.dout);
+        end_item(tr);
+      end
+  endtask
+endclass
+////////////////////////////////////////
+class rand_din_dout extends uvm_sequence#(transaction);
+  `uvm_object_utils(rand_din_dout)
+  
+  transaction tr;
+  
+  function new(input string path= "rand_din_dout");
+    super.new(path);
+  endfunction
+  
+  virtual task body();
+    repeat (5)
+      begin
+        tr=transaction::type_id::create("tr");
+        start_item(trs);
+        assert(tr.randomize());
+        `uvm_info("SEQ",$sformatf("rst:%0d din:%0d dout:%0d"),tr.rst,tr.din,tr.dout);
+        end_item(tr);
+      end
+  endtask
+endclass
+
+/////////    [Driver Class]    ////////////////
+class driver extends uvm_driver #(transaction)
+  `uvm_component_utils(driver)
+  
+  transaction tr;
+  virtual dff_if dif;
+  
+  function new(input string path="driver",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+  
+  
+  ////////////// Basicaaly gives Green signal if we are allowed to use dif data or not!!!///////
+  virtual function void build_phase(uvm_phase phase);
+  super.build_phase(phase);
+    if(!uvm_config_db#(virtual dff_if)::get(this,"","dif",dif))//uvm_test_top.env.agent.drv.aif
+      `uvm_error("drv","Unable to access Interface");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    tr=transaction::type_id::create("transaction");
+    forever begin
+      seq_item_port.get_next_item(tr);
+      tr.din <= dif.din;
+      tr.dout <= dif.dout;
+      `uvm_info("DRV",$sformatf("rst:%0d din:%0d dout:%0d"),tr.rst,tr.din,tr.dout);
+      seq_item_port.item_done();
+      repeat(2) @posedge (dif.clk);
+    end
+  endtask
+endclass
+///////////////////////////   [monitor] //////////
+
+class monitor extends uvm_monitor;
+  `uvm_component_utils(monitor)
+  
+  uvm_analysis_port#(transaction) send;
+  transaction tr;
+  virtual dff_if dif;
+  
+  function new(input string path="monitor",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+  super.build_phase(phase);
+    send=new("send",this);
+    tr=transaction::type_id::new("tr");
+    if(!uvm_config_db#(virtual dff_if)::get(this,"","dif",dif))//uvm_test_top.env.agent.drv.aif
+      `uvm_error("drv","Unable to access Interface");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      repeat(2) @(posedge dif.clk);
+       tr.rst  = dif.rst;
+       tr.din  = dif.din;
+       tr.dout = dif.dout;
+      `uvm_info("MON", $sformatf("rst : %0b  din : %0b  dout : %0b", tr.rst, tr.din, tr.dout), UVM_NONE);
+        send.write(tr);
+    end
+   endtask 
+ 
+endclass
+////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////
