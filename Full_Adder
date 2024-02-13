@@ -1,0 +1,226 @@
+//RTL.....
+module full_adder(a,b,c,sum,carry);
+  input  bit a,b,c;
+  output bit sum,carry;
+  
+  assign sum= a ^ b ^ c;
+  assign carry= (a  |b) | ((a & b) | c);
+endmodule
+
+
+//Test Bench...........
+//UVM Architrecture test bench
+`include "uvm_macros.svh"
+import uvm_pkg::*;
+
+//***************1st Component 
+interface fa;
+  logic a;
+  logic b;
+  logic c;
+  logic sum;
+  logic carry;
+
+  //This interface also includes modport clokcing block etcc...
+  //modport mod();
+  //clocking  c1;
+  //This is combinational circuit so there is no point of clocking block
+  //endclocking
+
+endinterface
+
+
+//*********************2nd Component
+class transaction extends uvm_sequence_item;
+  `uvm_object_utils(transaction)
+    
+  rand bit a;
+  rand bit b;
+  rand bit c;
+  bit sum;
+  bit carry;
+  
+  function new(input string path="transaction");
+    super.new(path);
+  endfunction
+
+endclass
+
+//********************3rd Component
+//class sequence extends uvm_sequence#(transaction)
+class my_sequence extends uvm_sequence;
+  `uvm_object_utils(my_sequence)
+  transaction tr;
+  
+  
+  function new(input string path="my_sequence");
+    super.new(my_sequence);
+  endfunction
+  
+  task run();
+    forever begin
+      //tr=new();
+      tr=transaction::type_id::create("tr");
+      start.item(tr);
+      assert(tr.randomize());
+      finish.item(tr);
+    end
+  endtask
+endclass    
+
+//***************4th component
+//class sequencer extends uvm_sequencer;
+//endclass
+/////////////////////////////
+
+
+//*****************5th component
+class driver extends uvm_driver#(transaction);
+  `uvm_component_utils(driver)
+  transaction tr;
+  virtual fa vfa;
+  
+  function new(input string path="driver",uvm_component parent);
+    super.new(path,parent);
+  endfunction
+  
+  
+  /*the role of Driver is to send thye data to dut.
+  1st:we need the data that we randomize {Tr data will be given by the transaction/packet class} 
+  2nd: we need the value from the interface
+  CONNECT INTERFCAE TO DUT WILL USE SET AND GET METHOD
+  */
+  //WHY THIS BUILD PHASE GET METHOD??????????????????
+  virtual function void build_phase(uvm_phase phase);
+    //GET have method if retuns "1" get success else "0"
+    if(!uvm_config_db #(virtual fa) ::get(this,"","vfa",vfa))
+      `uvm_error("Drv","UNABLE TO GET INTERFACE not set");
+  endfunction
+  
+  task run_phase();
+    //build.run_phase(phase);
+    forever begin
+      //We are using UVM_SEQUCNE concepts of getting data and sending data
+      sqrh_get_next_item(tr);
+      //USER DEFINE FOR CONVERTING pacaket to pin
+      inf_fa.a = tr.a;
+      inf_fa.b = tr.b;
+      inf_fa.c = tr.c;
+      sqrh.item_done;
+    end
+  endtask
+endclass
+
+//////////////////////////////////////
+//*****************6th component
+class monitor extends uvm_monitor;
+  `uvm_component_utils(monitor)
+  
+  //using TLM Analysis port
+  uvm_analysis_port#(transaction) send;
+  transaction tr;
+  virtual fa vfa;
+  
+  function new (input string path= "monitor", uvm_component parent);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase (uvm_phase phase);
+    super.build_phase(phase);
+    tr=transaction::type_id::create(tr);
+    send= new("send",this);
+    //You must receive the data using config_db to send the data to scoreboard
+    if(!uvm_config_db#(virtual fa)::get(this,"","vfa",vfa))
+      `uvm_error("MON","not getting the values");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      #30;
+      tr.a = vfa.a;
+      tr.b = vfa.b;
+      tr.c = vfa.c;
+      `uvm_info("MONITOR",$sformatf("The sending are a:%0d b:%0d c:%0d",tr.a,tr.b,tr.c),UVM_NONE);
+    end
+    //Using TLM to send the data to the 
+    //write: Used by the producer to send data to the analysis port.
+    send.write(tr);
+  endtask
+endclass
+
+//////////////////////////////////////
+//*****************7th component
+class scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(scoreboard)
+  
+  uvm_analysis_imp#(transaction,scoreboard) Rcv;
+  transaction tr;
+  virtual fa vfa;
+  
+  function new(input string path="scoreboard",uvm_component parent);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    Rcv=new("Rcv",this);
+  endfunction
+  
+  function void Ref_model(transaction tr);
+    if(tr.sum ==(tr.a ^ tr.b ^ tr.c))
+      begin
+      `uvm_info("Scoreboard",$sformatf("Test Case Pass:- a:%0d b:%0d c:%0d",tr.a,tr.b,tr.c),UVM_NONE);
+      end
+    else begin
+      //`uvm_error("Scoreboard",$sformatf("Test Case Failed:- a:%0d b:%0d c:%0d",tr.a,tr.b,tr.c))
+      `uvm_error("SCO:","NOT WORKING");
+    end
+  endfunction
+  
+endclass
+
+//////////////////////////////////////
+//*****************8th component
+class agent extends uvm_agent;
+  `uvm_component_utils(agent)
+  
+  //sequencer sqr;
+  driver drv;
+  monitor mon;
+  scoreboard scr;
+  
+  //This is different TLM ports
+  function new(input string path="agent",uvm_component parent);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    drv=driver::type_id::create("drv",this);
+    mon=monitor::type_id::create("mon",this);
+    sqr=sequencer::type_id::create("sqr",this);
+  endfunction
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    drv.seq_item_port.conect(sqr.seq_item_export);
+  endfunction
+  
+endclass
+    
+    
+//////////////////////////////////////
+//*****************9th component
+class env extends uvm_env;
+endclass
+
+
+///////////////////////
+/* module tb();
+	fa int_fa;
+    dut d0(int_fa);
+    initial begin
+    uvm_config_db#(virtual int_fa)::set (null,"*","int_fa",int_fa);
+    end
+  endmodule
+*/
